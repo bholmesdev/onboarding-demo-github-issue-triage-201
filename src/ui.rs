@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::{App, InputMode};
+use crate::app::{App, InputMode, StatusMessage};
 use crate::github::Issue;
 
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -218,21 +218,19 @@ fn format_issue_preview(issue: &Issue) -> Text<'static> {
 }
 
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
-    let help_text = match app.input_mode {
-        InputMode::Normal => {
-            if let Some(status) = &app.status_message {
-                status.as_str()
-            } else {
-                " j/↓: down  k/↑: up  Enter: open  p: copy prompt  /: filter  r: refresh  q: quit "
-            }
-        }
-        InputMode::Filter => " Type to filter  Enter/Esc: done  Backspace: delete ",
-    };
-
-    let style = if app.status_message.is_some() {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default()
+    let (help_text, style) = match app.input_mode {
+        InputMode::Normal => match &app.status_message {
+            Some(StatusMessage::Success(msg)) => (msg.as_str(), Style::default().fg(Color::Green)),
+            Some(StatusMessage::Error(msg)) => (msg.as_str(), Style::default().fg(Color::Red)),
+            None => (
+                " j/↓: down  k/↑: up  Enter: open  p: copy prompt  /: filter  r: refresh  q: quit ",
+                Style::default(),
+            ),
+        },
+        InputMode::Filter => (
+            " Type to filter  Enter/Esc: done  Backspace: delete ",
+            Style::default(),
+        ),
     };
 
     let help = Paragraph::new(help_text)
