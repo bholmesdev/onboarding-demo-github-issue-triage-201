@@ -67,10 +67,16 @@ impl App {
                 Ok(cached) if !cached.is_empty() => {
                     self.issues = cached.into_iter().filter(|i| i.state == "open").collect();
                     self.selected = 0;
+                    cache.get_last_sync().ok().flatten()
                 }
-                _ => {}
+                Ok(_) => cache.get_last_sync().ok().flatten(),
+                Err(e) => {
+                    // Cache corrupted, clear and do full fetch
+                    eprintln!("Cache load failed, clearing: {e}");
+                    let _ = cache.clear();
+                    None
+                }
             }
-            cache.get_last_sync().ok().flatten()
         } else {
             None
         };

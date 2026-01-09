@@ -24,7 +24,19 @@ impl Cache {
             Connection::open(&db_path).map_err(|e| format!("Failed to open cache DB: {e}"))?;
 
         let cache = Self { conn };
-        cache.init_schema()?;
+
+        // Try to init schema; if corrupt, delete and retry
+        if let Err(e) = cache.init_schema() {
+            eprintln!("Cache corrupted, resetting: {e}");
+            drop(cache);
+            let _ = std::fs::remove_file(&db_path);
+            let conn = Connection::open(&db_path)
+                .map_err(|e| format!("Failed to recreate cache DB: {e}"))?;
+            let cache = Self { conn };
+            cache.init_schema()?;
+            return Ok(cache);
+        }
+
         Ok(cache)
     }
 
@@ -78,6 +90,14 @@ impl Cache {
             ",
             )
             .map_err(|e| format!("Failed to init schema: {e}"))?;
+        Ok(())
+    }
+
+    /// Clear the cache (used on corruption recovery)
+    pub fn clear(&self) -> Result<(), String> {
+        self.conn
+            .execute_batch("DELETE FROM comments; DELETE FROM labels; DELETE FROM issues; UPDATE repo_meta SET last_sync = NULL;")
+            .map_err(|e| format!("Failed to clear cache: {e}"))?;
         Ok(())
     }
 
