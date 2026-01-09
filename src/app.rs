@@ -1,5 +1,7 @@
 use arboard::Clipboard;
+use chrono::Utc;
 
+use crate::cache::Cache;
 use crate::github::{self, Issue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,11 +26,22 @@ pub struct App {
     pub error: Option<String>,
     pub status_message: Option<StatusMessage>,
     runtime: tokio::runtime::Runtime,
+    cache: Option<Cache>,
 }
 
 impl App {
     pub fn new(repo: String) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+        // Try to open cache
+        let cache = match Cache::open(&repo) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                eprintln!("Warning: Could not open cache: {e}");
+                None
+            }
+        };
+
         Self {
             repo,
             issues: Vec::new(),
@@ -39,22 +52,84 @@ impl App {
             error: None,
             status_message: None,
             runtime,
+            cache,
         }
     }
 
-    /// Fetch issues from GitHub
+    /// Fetch issues from GitHub with caching
     pub fn refresh(&mut self) {
         self.loading = true;
         self.error = None;
 
+        // Try to load from cache first for instant display
+        let last_sync = if let Some(ref cache) = self.cache {
+            match cache.load_issues() {
+                Ok(cached) if !cached.is_empty() => {
+                    self.issues = cached.into_iter().filter(|i| i.state == "open").collect();
+                    self.selected = 0;
+                }
+                _ => {}
+            }
+            cache.get_last_sync().ok().flatten()
+        } else {
+            None
+        };
+
+        // Fetch from API (incremental if we have last_sync)
         let repo = self.repo.clone();
-        match self.runtime.block_on(github::fetch_issues(&repo, 100)) {
-            Ok(issues) => {
-                self.issues = issues;
+        let sync_time = Utc::now();
+        match self
+            .runtime
+            .block_on(github::fetch_issues(&repo, 100, last_sync))
+        {
+            Ok(fetched) => {
+                // Separate open and closed issues
+                let closed_numbers: Vec<u64> = fetched
+                    .iter()
+                    .filter(|i| i.state == "closed")
+                    .map(|i| i.number)
+                    .collect();
+
+                // If incremental, merge; otherwise replace
+                if last_sync.is_some() {
+                    // Remove closed issues from our list
+                    self.issues.retain(|i| !closed_numbers.contains(&i.number));
+
+                    // Update/add fetched open issues
+                    for issue in fetched.iter().filter(|i| i.state == "open") {
+                        if let Some(existing) =
+                            self.issues.iter_mut().find(|i| i.number == issue.number)
+                        {
+                            *existing = issue.clone();
+                        } else {
+                            self.issues.push(issue.clone());
+                        }
+                    }
+                } else {
+                    self.issues = fetched
+                        .clone()
+                        .into_iter()
+                        .filter(|i| i.state == "open")
+                        .collect();
+                }
+
                 self.selected = 0;
+
+                // Save to cache
+                if let Some(ref cache) = self.cache {
+                    if let Err(e) = cache.save_issues(&fetched, sync_time) {
+                        eprintln!("Warning: Failed to save cache: {e}");
+                    }
+                    if !closed_numbers.is_empty() {
+                        let _ = cache.remove_closed_issues(&closed_numbers);
+                    }
+                }
             }
             Err(e) => {
-                self.error = Some(e);
+                // Only show error if we don't have cached data
+                if self.issues.is_empty() {
+                    self.error = Some(e);
+                }
             }
         }
 
