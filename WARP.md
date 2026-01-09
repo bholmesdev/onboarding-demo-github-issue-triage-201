@@ -1,5 +1,11 @@
 # WARP.md
 
+## Workflow
+
+- Always verify your work by running `cargo check && cargo fmt` before returning control.
+
+## Commands
+
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
 ## Build & Run
