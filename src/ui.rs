@@ -220,13 +220,23 @@ fn format_issue_preview(issue: &Issue) -> Text<'static> {
 fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
     let help_text = match app.input_mode {
         InputMode::Normal => {
-            " j/↓: down  k/↑: up  Enter: open  P: copy prompt  /: filter  r: refresh  q: quit "
+            if let Some(status) = &app.status_message {
+                status.as_str()
+            } else {
+                " j/↓: down  k/↑: up  Enter: open  p: copy prompt  /: filter  r: refresh  q: quit "
+            }
         }
         InputMode::Filter => " Type to filter  Enter/Esc: done  Backspace: delete ",
     };
 
+    let style = if app.status_message.is_some() {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default()
+    };
+
     let help = Paragraph::new(help_text)
-        .style(Style::default())
+        .style(style)
         .block(Block::default().borders(Borders::ALL));
 
     frame.render_widget(help, area);

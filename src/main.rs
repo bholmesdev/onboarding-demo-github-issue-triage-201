@@ -81,13 +81,19 @@ fn run_app<B: ratatui::backend::Backend>(
             match app.input_mode {
                 InputMode::Normal => match key.code {
                     KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('j') | KeyCode::Down => app.next(),
-                    KeyCode::Char('k') | KeyCode::Up => app.previous(),
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        app.clear_status();
+                        app.next();
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        app.clear_status();
+                        app.previous();
+                    }
                     KeyCode::Enter => app.open_selected(),
                     KeyCode::Char('/') => app.start_filter(),
                     KeyCode::Char('r') => app.refresh(),
-                    KeyCode::Char('P') => {
-                        let _ = app.copy_issue_prompt();
+                    KeyCode::Char('p') => {
+                        app.copy_issue_prompt();
                     }
                     KeyCode::Esc => app.clear_filter(),
                     _ => {}
