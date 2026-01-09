@@ -8,6 +8,12 @@ pub enum InputMode {
     Filter,
 }
 
+#[derive(Debug, Clone)]
+pub enum StatusMessage {
+    Success(String),
+    Error(String),
+}
+
 pub struct App {
     pub repo: String,
     pub issues: Vec<Issue>,
@@ -16,6 +22,7 @@ pub struct App {
     pub input_mode: InputMode,
     pub loading: bool,
     pub error: Option<String>,
+    pub status_message: Option<StatusMessage>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -30,6 +37,7 @@ impl App {
             input_mode: InputMode::Normal,
             loading: true,
             error: None,
+            status_message: None,
             runtime,
         }
     }
@@ -126,18 +134,29 @@ impl App {
     }
 
     /// Copy a prompt for the selected issue to the clipboard
-    pub fn copy_issue_prompt(&self) -> Result<(), String> {
+    pub fn copy_issue_prompt(&mut self) {
+        match self.build_and_copy_prompt() {
+            Ok(_) => {
+                self.status_message = Some(StatusMessage::Success(
+                    "Prompt copied to clipboard!".to_string(),
+                ))
+            }
+            Err(e) => self.status_message = Some(StatusMessage::Error(e)),
+        }
+    }
+
+    fn build_and_copy_prompt(&self) -> Result<(), String> {
         let issue = self
             .selected_issue()
             .ok_or_else(|| "No issue selected".to_string())?;
 
         let mut prompt = String::new();
 
+        // Agent instruction
+        prompt.push_str("/plan fix this issue for me\n\n");
+
         // Header
-        prompt.push_str(&format!(
-            "GitHub Issue: {}#{}\n",
-            self.repo, issue.number
-        ));
+        prompt.push_str(&format!("GitHub Issue: {}#{}\n", self.repo, issue.number));
         prompt.push_str(&format!("Title: {}\n", issue.title));
         prompt.push_str(&format!("Author: {}\n", issue.author.login));
         prompt.push_str(&format!("Created: {}\n", issue.created_at));
@@ -166,11 +185,17 @@ impl App {
         }
 
         // Copy to clipboard
-        let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+        let mut clipboard =
+            Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
         clipboard
             .set_text(prompt)
             .map_err(|e| format!("Failed to copy to clipboard: {e}"))?;
 
         Ok(())
+    }
+
+    /// Clear the status message
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
     }
 }
