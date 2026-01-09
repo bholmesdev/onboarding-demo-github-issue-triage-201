@@ -1,5 +1,6 @@
 use std::process::{Command, Stdio};
 
+use chrono::{DateTime, Utc};
 use octocrab::Octocrab;
 
 #[derive(Debug, Clone)]
@@ -9,6 +10,8 @@ pub struct Issue {
     pub body: Option<String>,
     pub author: Author,
     pub created_at: String,
+    pub updated_at: String,
+    pub state: String,
     pub labels: Vec<Label>,
     pub comments: Vec<Comment>,
 }
@@ -44,7 +47,12 @@ fn build_client() -> Result<Octocrab, String> {
 }
 
 /// Fetch issues from a GitHub repository using the GitHub REST API
-pub async fn fetch_issues(repo: &str, limit: u32) -> Result<Vec<Issue>, String> {
+/// If `since` is provided, only issues updated after that time are fetched.
+pub async fn fetch_issues(
+    repo: &str,
+    limit: u32,
+    since: Option<DateTime<Utc>>,
+) -> Result<Vec<Issue>, String> {
     let (owner, repo_name) = repo
         .split_once('/')
         .ok_or_else(|| "Invalid repo format, expected owner/repo".to_string())?;
@@ -52,11 +60,19 @@ pub async fn fetch_issues(repo: &str, limit: u32) -> Result<Vec<Issue>, String> 
     let client = build_client()?;
     let issue_handler = client.issues(owner, repo_name);
 
-    // Fetch issues
-    let page = issue_handler
-        .list()
-        .state(octocrab::params::State::Open)
-        .per_page(limit.min(100) as u8)
+    // Build query - if doing incremental sync, fetch all states to catch closed issues
+    let mut builder = issue_handler.list();
+    if let Some(since_time) = since {
+        builder = builder
+            .since(since_time)
+            .state(octocrab::params::State::All)
+            .sort(octocrab::params::issues::Sort::Updated);
+    } else {
+        builder = builder.state(octocrab::params::State::Open);
+    }
+    builder = builder.per_page(limit.min(100) as u8);
+
+    let page = builder
         .send()
         .await
         .map_err(|e| format!("Failed to fetch issues: {e}"))?;
@@ -71,6 +87,12 @@ pub async fn fetch_issues(repo: &str, limit: u32) -> Result<Vec<Issue>, String> 
         // Fetch comments for this issue
         let comments = fetch_comments(&client, owner, repo_name, gh_issue.number).await;
 
+        let state = match gh_issue.state {
+            octocrab::models::IssueState::Open => "open",
+            octocrab::models::IssueState::Closed => "closed",
+            _ => "unknown",
+        };
+
         let issue = Issue {
             number: gh_issue.number,
             title: gh_issue.title,
@@ -79,6 +101,8 @@ pub async fn fetch_issues(repo: &str, limit: u32) -> Result<Vec<Issue>, String> 
                 login: gh_issue.user.login,
             },
             created_at: gh_issue.created_at.to_rfc3339(),
+            updated_at: gh_issue.updated_at.to_rfc3339(),
+            state: state.to_string(),
             labels: gh_issue
                 .labels
                 .into_iter()

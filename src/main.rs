@@ -1,4 +1,5 @@
 mod app;
+mod cache;
 mod github;
 mod ui;
 
