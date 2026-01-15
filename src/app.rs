@@ -16,6 +16,7 @@ pub struct App {
     pub input_mode: InputMode,
     pub loading: bool,
     pub error: Option<String>,
+    pub status_message: Option<String>,
     runtime: tokio::runtime::Runtime,
 }
 
@@ -30,6 +31,7 @@ impl App {
             input_mode: InputMode::Normal,
             loading: true,
             error: None,
+            status_message: None,
             runtime,
         }
     }
@@ -125,13 +127,21 @@ impl App {
         self.selected = 0;
     }
 
+    /// Clear status message
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
+    }
+
     /// Copy a prompt for the selected issue to the clipboard
-    pub fn copy_issue_prompt(&self) -> Result<(), String> {
+    pub fn copy_issue_prompt(&mut self) -> Result<(), String> {
         let issue = self
             .selected_issue()
             .ok_or_else(|| "No issue selected".to_string())?;
 
         let mut prompt = String::new();
+
+        // Start with /plan command and action
+        prompt.push_str("/plan Investigate and fix this issue:\n\n");
 
         // Header
         prompt.push_str(&format!(
@@ -171,6 +181,7 @@ impl App {
             .set_text(prompt)
             .map_err(|e| format!("Failed to copy to clipboard: {e}"))?;
 
+        self.status_message = Some("Copied to clipboard!".to_string());
         Ok(())
     }
 }
