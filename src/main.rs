@@ -79,37 +79,24 @@ fn run_app<B: ratatui::backend::Backend>(
             }
 
             match app.input_mode {
-                InputMode::Normal => match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        app.clear_status();
-                        app.next();
+                InputMode::Normal => {
+                    app.clear_status();
+                    match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('j') | KeyCode::Down => app.next(),
+                        KeyCode::Char('k') | KeyCode::Up => app.previous(),
+                        KeyCode::Enter => app.open_selected(),
+                        KeyCode::Char('/') => app.start_filter(),
+                        KeyCode::Char('r') => app.refresh(),
+                        KeyCode::Char('p') => {
+                            if let Err(e) = app.copy_issue_prompt() {
+                                app.status_message = Some(e);
+                            }
+                        }
+                        KeyCode::Esc => app.clear_filter(),
+                        _ => {}
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        app.clear_status();
-                        app.previous();
-                    }
-                    KeyCode::Enter => {
-                        app.clear_status();
-                        app.open_selected();
-                    }
-                    KeyCode::Char('/') => {
-                        app.clear_status();
-                        app.start_filter();
-                    }
-                    KeyCode::Char('r') => {
-                        app.clear_status();
-                        app.refresh();
-                    }
-                    KeyCode::Char('p') => {
-                        let _ = app.copy_issue_prompt();
-                    }
-                    KeyCode::Esc => {
-                        app.clear_status();
-                        app.clear_filter();
-                    }
-                    _ => {}
-                },
+                }
                 InputMode::Filter => match key.code {
                     KeyCode::Enter | KeyCode::Esc => app.exit_filter(),
                     KeyCode::Backspace => app.filter_pop(),
