@@ -1,5 +1,7 @@
 use arboard::Clipboard;
+use chrono::DateTime;
 
+use crate::cache::Cache;
 use crate::github::{self, Issue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,11 +20,13 @@ pub struct App {
     pub error: Option<String>,
     pub status_message: Option<String>,
     runtime: tokio::runtime::Runtime,
+    cache: Option<Cache>,
 }
 
 impl App {
     pub fn new(repo: String) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        let cache = Cache::new(&repo).ok();
         Self {
             repo,
             issues: Vec::new(),
@@ -33,22 +37,81 @@ impl App {
             error: None,
             status_message: None,
             runtime,
+            cache,
         }
     }
 
-    /// Fetch issues from GitHub
+    /// Fetch issues from GitHub with cache-first strategy
     pub fn refresh(&mut self) {
         self.loading = true;
         self.error = None;
 
         let repo = self.repo.clone();
-        match self.runtime.block_on(github::fetch_issues(&repo, 100)) {
-            Ok(issues) => {
-                self.issues = issues;
+
+        // Determine if we should do incremental fetch
+        let (since, has_cache) = if let Some(ref cache) = self.cache {
+            let last_fetch = cache
+                .get_last_fetch_time()
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            let has_cache = cache.has_issues();
+            (last_fetch, has_cache)
+        } else {
+            (None, false)
+        };
+
+        // If we have cache, load it first for instant display
+        if has_cache {
+            if let Some(ref cache) = self.cache {
+                if let Ok(cached_issues) = cache.load_all_issues() {
+                    self.issues = cached_issues;
+                    self.selected = 0;
+                }
+            }
+        }
+
+        // Fetch from GitHub (incremental if we have a last fetch time)
+        match self
+            .runtime
+            .block_on(github::fetch_issues(&repo, 100, since))
+        {
+            Ok(fetched_issues) => {
+                if let Some(ref cache) = self.cache {
+                    // Process fetched issues: update cache, handle closed issues
+                    for issue in &fetched_issues {
+                        if issue.state == "open" {
+                            // Upsert open issues
+                            let _ = cache.upsert_issues(&[issue.clone()]);
+                        } else {
+                            // Remove closed issues from cache
+                            let _ = cache.remove_issue(issue.number);
+                        }
+                    }
+
+                    // Update last fetch time
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let _ = cache.set_last_fetch_time(&now);
+
+                    // Reload from cache to get merged results
+                    if let Ok(all_issues) = cache.load_all_issues() {
+                        self.issues = all_issues;
+                    }
+                } else {
+                    // No cache, just use fetched issues (filter to open only)
+                    self.issues = fetched_issues
+                        .into_iter()
+                        .filter(|i| i.state == "open")
+                        .collect();
+                }
                 self.selected = 0;
             }
             Err(e) => {
-                self.error = Some(e);
+                // If we already loaded from cache, just show a warning
+                if has_cache {
+                    self.status_message = Some(format!("Using cached data (fetch failed: {e})"));
+                } else {
+                    self.error = Some(e);
+                }
             }
         }
 
@@ -144,10 +207,7 @@ impl App {
         prompt.push_str("/plan Investigate and fix this issue:\n\n");
 
         // Header
-        prompt.push_str(&format!(
-            "GitHub Issue: {}#{}\n",
-            self.repo, issue.number
-        ));
+        prompt.push_str(&format!("GitHub Issue: {}#{}\n", self.repo, issue.number));
         prompt.push_str(&format!("Title: {}\n", issue.title));
         prompt.push_str(&format!("Author: {}\n", issue.author.login));
         prompt.push_str(&format!("Created: {}\n", issue.created_at));
@@ -176,7 +236,8 @@ impl App {
         }
 
         // Copy to clipboard
-        let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+        let mut clipboard =
+            Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
         clipboard
             .set_text(prompt)
             .map_err(|e| format!("Failed to copy to clipboard: {e}"))?;
