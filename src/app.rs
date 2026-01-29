@@ -1,6 +1,7 @@
 use arboard::Clipboard;
+use rusqlite::Connection;
 
-use crate::github::{self, Issue};
+use crate::{cache, github::{self, Issue}};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -17,20 +18,27 @@ pub struct App {
     pub loading: bool,
     pub error: Option<String>,
     runtime: tokio::runtime::Runtime,
+    cache_db: Connection,
 }
 
 impl App {
     pub fn new(repo: String) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        
+        // Initialize cache and load cached issues
+        let cache_db = cache::init_db().expect("Failed to initialize cache");
+        let cached_issues = cache::load_issues(&cache_db, &repo).unwrap_or_default();
+        
         Self {
             repo,
-            issues: Vec::new(),
+            issues: cached_issues,
             selected: 0,
             filter: String::new(),
             input_mode: InputMode::Normal,
             loading: true,
             error: None,
             runtime,
+            cache_db,
         }
     }
 
@@ -42,6 +50,11 @@ impl App {
         let repo = self.repo.clone();
         match self.runtime.block_on(github::fetch_issues(&repo, 100)) {
             Ok(issues) => {
+                // Save to cache
+                if let Err(e) = cache::save_issues(&self.cache_db, &repo, &issues) {
+                    eprintln!("Failed to save to cache: {}", e);
+                }
+                
                 self.issues = issues;
                 self.selected = 0;
             }

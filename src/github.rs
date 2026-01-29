@@ -9,6 +9,7 @@ pub struct Issue {
     pub body: Option<String>,
     pub author: Author,
     pub created_at: String,
+    pub updated_at: String,
     pub labels: Vec<Label>,
     pub comments: Vec<Comment>,
 }
@@ -18,13 +19,13 @@ pub struct Author {
     pub login: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Label {
     pub name: String,
     pub color: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Comment {
     pub author: String,
     pub body: String,
@@ -79,6 +80,7 @@ pub async fn fetch_issues(repo: &str, limit: u32) -> Result<Vec<Issue>, String> 
                 login: gh_issue.user.login,
             },
             created_at: gh_issue.created_at.to_rfc3339(),
+            updated_at: gh_issue.updated_at.to_rfc3339(),
             labels: gh_issue
                 .labels
                 .into_iter()
