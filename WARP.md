@@ -2,6 +2,8 @@
 
 This file provides guidance to WARP (warp.dev) when working with code in this repository.
 
+Always run `cargo fmt` before returning at the end of a task.
+
 ## Build & Run
 
 ```bash

@@ -1,18 +1,20 @@
 use rusqlite::{Connection, Result};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use crate::github::Issue;
 
 /// Get the cache database file path
 fn get_cache_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-    let cache_dir = PathBuf::from(home).join(".local/share/issue-triage");
+    let cache_dir = dirs::data_local_dir()
+        .ok_or("Failed to get data directory".to_string())?
+        .join("issue-triage");
     std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {e}"))?;
     Ok(cache_dir.join("cache.db"))
 }
 
-/// Initialize the database and return a connection
-pub fn init_db() -> Result<Connection, String> {
+/// Initialize the database and return a connection wrapped in Arc<Mutex>
+pub fn init_db() -> Result<Arc<Mutex<Connection>>, String> {
     let db_path = get_cache_path()?;
     let conn = Connection::open(db_path).map_err(|e| format!("Failed to open DB: {e}"))?;
 
@@ -33,11 +35,19 @@ pub fn init_db() -> Result<Connection, String> {
     )
     .map_err(|e| format!("Failed to create table: {e}"))?;
 
-    Ok(conn)
+    Ok(Arc::new(Mutex::new(conn)))
 }
 
 /// Save issues to the cache
-pub fn save_issues(conn: &Connection, repo: &str, issues: &[Issue]) -> Result<(), String> {
+pub fn save_issues(
+    conn: &Arc<Mutex<Connection>>,
+    repo: &str,
+    issues: &[Issue],
+) -> Result<(), String> {
+    let conn = conn
+        .lock()
+        .map_err(|e| format!("Failed to lock connection: {e}"))?;
+
     for issue in issues {
         let labels_json = serde_json::to_string(&issue.labels)
             .map_err(|e| format!("Failed to serialize labels: {e}"))?;
@@ -67,30 +77,44 @@ pub fn save_issues(conn: &Connection, repo: &str, issues: &[Issue]) -> Result<()
 }
 
 /// Load issues from the cache
-pub fn load_issues(conn: &Connection, repo: &str) -> Result<Vec<Issue>, String> {
+pub fn load_issues(conn: &Arc<Mutex<Connection>>, repo: &str) -> Result<Vec<Issue>, String> {
+    let conn = conn
+        .lock()
+        .map_err(|e| format!("Failed to lock connection: {e}"))?;
+
     let mut stmt = conn
         .prepare("SELECT number, title, body, author_login, created_at, updated_at, labels, comments FROM issues WHERE repo = ?1")
         .map_err(|e| format!("Failed to prepare query: {e}"))?;
 
     let issue_iter = stmt
         .query_map([repo], |row| {
-            let labels_json: String = row.get(6)?;
-            let comments_json: String = row.get(7)?;
+            let labels_json: String = row.get("labels")?;
+            let comments_json: String = row.get("comments")?;
 
-            let labels = serde_json::from_str(&labels_json)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?;
-            let comments = serde_json::from_str(&comments_json)
-                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e)))?;
+            let labels = serde_json::from_str(&labels_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    6,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+            let comments = serde_json::from_str(&comments_json).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
 
             Ok(Issue {
-                number: row.get::<_, i64>(0)? as u64,
-                title: row.get(1)?,
-                body: row.get(2)?,
+                number: row.get::<_, i64>("number")? as u64,
+                title: row.get("title")?,
+                body: row.get("body")?,
                 author: crate::github::Author {
-                    login: row.get(3)?,
+                    login: row.get("author_login")?,
                 },
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                created_at: row.get("created_at")?,
+                updated_at: row.get("updated_at")?,
                 labels,
                 comments,
             })

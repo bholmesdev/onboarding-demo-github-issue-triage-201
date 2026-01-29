@@ -1,7 +1,11 @@
 use arboard::Clipboard;
 use rusqlite::Connection;
+use std::sync::{Arc, Mutex};
 
-use crate::{cache, github::{self, Issue}};
+use crate::{
+    cache,
+    github::{self, Issue},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputMode {
@@ -18,17 +22,17 @@ pub struct App {
     pub loading: bool,
     pub error: Option<String>,
     runtime: tokio::runtime::Runtime,
-    cache_db: Connection,
+    cache_db: Arc<Mutex<Connection>>,
 }
 
 impl App {
     pub fn new(repo: String) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        
+
         // Initialize cache and load cached issues
         let cache_db = cache::init_db().expect("Failed to initialize cache");
         let cached_issues = cache::load_issues(&cache_db, &repo).unwrap_or_default();
-        
+
         Self {
             repo,
             issues: cached_issues,
@@ -54,7 +58,7 @@ impl App {
                 if let Err(e) = cache::save_issues(&self.cache_db, &repo, &issues) {
                     eprintln!("Failed to save to cache: {}", e);
                 }
-                
+
                 self.issues = issues;
                 self.selected = 0;
             }
@@ -147,10 +151,7 @@ impl App {
         let mut prompt = String::new();
 
         // Header
-        prompt.push_str(&format!(
-            "GitHub Issue: {}#{}\n",
-            self.repo, issue.number
-        ));
+        prompt.push_str(&format!("GitHub Issue: {}#{}\n", self.repo, issue.number));
         prompt.push_str(&format!("Title: {}\n", issue.title));
         prompt.push_str(&format!("Author: {}\n", issue.author.login));
         prompt.push_str(&format!("Created: {}\n", issue.created_at));
@@ -179,7 +180,8 @@ impl App {
         }
 
         // Copy to clipboard
-        let mut clipboard = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+        let mut clipboard =
+            Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
         clipboard
             .set_text(prompt)
             .map_err(|e| format!("Failed to copy to clipboard: {e}"))?;
